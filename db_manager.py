@@ -43,4 +43,3 @@ class DBManager:
             logger.info("MongoDB connection closed.")
 
 
-# __name__ = "db_manager"
