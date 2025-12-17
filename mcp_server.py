@@ -1,77 +1,87 @@
-
 import os
 from mcp.server.fastmcp import FastMCP
 from pymongo import MongoClient
 from bson import json_util
 import json
 
-# Initialize FastMCP server
-mcp = FastMCP("ProfileScraperDB")
-
-# Database Connection
+mcp = FastMCP("TechProfileAnalytics")
 
 
 def get_db():
-    # Reusing your logic: connect to the profiles collection
     client = MongoClient(os.getenv("MONGO_URI", "mongodb://localhost:27017"))
-    # Update to your actual DB name
-    db = client['profile_scraper']
+    # Ensure this matches your actual database name used in DBManager
+    db = client['profiles_database']
     return db['profiles']
 
 
 @mcp.tool()
 def search_profiles(query: str, limit: int = 5):
-    """
-    Search for profiles in the database by name, headline, skills, or location.
-    Args:
-        query: The search term (e.g., 'Python developer' or 'San Francisco')
-        limit: Number of results to return
-    """
+    """General search for profiles based on text in name, headline, or location."""
     col = get_db()
-
-    # Simple text search across multiple fields
     search_filter = {
         "$or": [
             {"basics.name": {"$regex": query, "$options": "i"}},
             {"basics.headline": {"$regex": query, "$options": "i"}},
             {"basics.location": {"$regex": query, "$options": "i"}},
-            {"skills": {"$regex": query, "$options": "i"}},
-            {"source_platform": {"$regex": query, "$options": "i"}}
+            {"skills": {"$regex": query, "$options": "i"}}
         ]
     }
-
     results = list(col.find(search_filter).limit(limit))
-    # Convert MongoDB BSON to JSON string
     return json.loads(json_util.dumps(results))
 
 
 @mcp.tool()
-def get_platform_stats():
-    """Returns a count of profiles grouped by source platform (GitHub, Kaggle, etc.)"""
+def find_top_experts(skill: str, limit: int = 5):
+    """
+    Finds the highest-ranked professionals for a specific skill.
+    Uses reputation scores and contribution counts for ranking.
+    """
+    col = get_db()
+    query = {
+        "$or": [
+            {"skills": {"$regex": skill, "$options": "i"}},
+            {"basics.headline": {"$regex": skill, "$options": "i"}}
+        ]
+    }
+    # Ranking logic: High reputation, high contribution, high followers
+    results = list(col.find(query).sort([
+        ("metrics.reputation_score", -1),
+        ("metrics.contribution_count", -1),
+        ("metrics.followers", -1)
+    ]).limit(limit))
+    return json.loads(json_util.dumps(results))
+
+
+@mcp.tool()
+def get_geo_density(location: str):
+    """
+    Analyzes the concentration of tech talent in a specific city or region.
+    Returns counts per platform and avg reputation scores.
+    """
     col = get_db()
     pipeline = [
-        {"$group": {"_id": "$source_platform", "count": {"$sum": 1}}}
+        {"$match": {"basics.location": {"$regex": location, "$options": "i"}}},
+        {"$group": {
+            "_id": "$source_platform",
+            "total_count": {"$sum": 1},
+            "avg_reputation": {"$avg": "$metrics.reputation_score"}
+        }}
     ]
-    stats = list(col.aggregate(pipeline))
-    return stats
+    return list(col.aggregate(pipeline))
 
 
 @mcp.tool()
-def get_top_contributors(platform: str, metric: str, limit: int = 5):
-    """
-    Find top profiles on a platform based on a metric.
-    Args:
-        platform: 'GitHub', 'StackOverflow', 'Kaggle', or 'ORCID'
-        metric: 'followers', 'reputation_score', 'contribution_count'
-        limit: Number of profiles to return
-    """
+def get_skill_distribution():
+    """Identifies the most common tech skills appearing in the database."""
     col = get_db()
-    sort_key = f"metrics.{metric}"
-    results = list(col.find({"source_platform": platform}).sort(
-        sort_key, -1).limit(limit))
-    return json.loads(json_util.dumps(results))
+    pipeline = [
+        {"$unwind": "$skills"},
+        {"$group": {"_id": "$skills", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+        {"$limit": 20}
+    ]
+    return list(col.aggregate(pipeline))
 
 
 if __name__ == "__main__":
-    # Start the server using stdio (standard for MCP)
     mcp.run()

@@ -1,125 +1,117 @@
+from dotenv import load_dotenv
 import requests
 import time
 import json
 import asyncio
-from mcp_server import search_profiles, get_platform_stats, get_top_contributors
+from mcp_server import search_profiles, find_top_experts, get_geo_density, get_skill_distribution
 import os
-from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()
-# --- Gemini API Configuration ---
-MODEL_NAME = "gemini-2.5-flash-preview-09-2025"
+
 API_KEY = os.getenv("GEMINI_API_KEY")  # Handled by environment
 
+# Gemini Configuration
+MODEL_NAME = "gemini-2.5-flash-preview-09-2025"
 
-def call_gemini(prompt, tools_definitions=None):
+
+def call_gemini(prompt, include_tools=True):
+    """Wraps the Gemini API with optional tool definitions."""
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent?key={API_KEY}"
 
     payload = {
-        "contents": [{
-            "parts": [{"text": prompt}]
-        }],
-        "tools": [{
+        "contents": [{"parts": [{"text": prompt}]}]
+    }
+
+    if include_tools:
+        payload["tools"] = [{
             "function_declarations": [
                 {
                     "name": "search_profiles",
-                    "description": "Search for profiles in the database by name, headline, skills, or location.",
-                    "parameters": {
-                        "type": "OBJECT",
-                        "properties": {
-                            "query": {"type": "STRING"},
-                            "limit": {"type": "NUMBER"}
-                        },
-                        "required": ["query"]
-                    }
+                    "description": "Find specific people by text query.",
+                    "parameters": {"type": "OBJECT", "properties": {"query": {"type": "STRING"}}, "required": ["query"]}
                 },
                 {
-                    "name": "get_platform_stats",
-                    "description": "Returns count of profiles grouped by source platform."
+                    "name": "find_top_experts",
+                    "description": "Identifies highly-qualified professionals for a specific tech skill.",
+                    "parameters": {"type": "OBJECT", "properties": {"skill": {"type": "STRING"}}, "required": ["skill"]}
                 },
                 {
-                    "name": "get_top_contributors",
-                    "description": "Find top profiles on a platform based on a metric.",
-                    "parameters": {
-                        "type": "OBJECT",
-                        "properties": {
-                            "platform": {"type": "STRING"},
-                            "metric": {"type": "STRING"},
-                            "limit": {"type": "NUMBER"}
-                        },
-                        "required": ["platform", "metric"]
-                    }
+                    "name": "get_geo_density",
+                    "description": "Analyzes tech talent concentration in a location.",
+                    "parameters": {"type": "OBJECT", "properties": {"location": {"type": "STRING"}}, "required": ["location"]}
+                },
+                {
+                    "name": "get_skill_distribution",
+                    "description": "Returns most common skills across the entire database."
                 }
             ]
         }]
-    }
 
-    # Exponential Backoff for API Calls
-    for attempt in range(6):
+    for attempt in range(5):
         try:
             response = requests.post(url, json=payload)
             if response.status_code == 200:
                 return response.json()
-            if response.status_code == 429:  # Rate limit
+            if response.status_code == 429:
                 time.sleep(2**attempt)
-                continue
-            break
-        except Exception:
-            time.sleep(2**attempt)
-
+        except:
+            time.sleep(1)
     return None
 
 
-def handle_tool_calls(response_json):
-    """Parses Gemini response and executes the matching local MCP tools."""
-    candidate = response_json.get('candidates', [{}])[0]
-    parts = candidate.get('content', {}).get('parts', [])
+def extract_text(resp):
+    """Helper to safely extract text content."""
+    try:
+        return resp['candidates'][0]['content']['parts'][0]['text']
+    except:
+        return None
 
+
+def process_tool_calls(resp):
+    """Detects and executes function calls requested by the AI."""
+    parts = resp.get('candidates', [{}])[0].get('content', {}).get('parts', [])
     for part in parts:
         if 'functionCall' in part:
-            call = part['functionCall']
-            name = call['name']
-            args = call['args']
-
-            print(f"AI is calling Tool: {name} with args: {args}")
+            fc = part['functionCall']
+            name, args = fc['name'], fc['args']
+            print(f"AI executing tool: {name}")
 
             if name == "search_profiles":
                 return search_profiles(**args)
-            if name == "get_platform_stats":
-                return get_platform_stats()
-            if name == "get_top_contributors":
-                return get_top_contributors(**args)
-
-    return parts[0].get('text') if parts else "No answer."
+            if name == "find_top_experts":
+                return find_top_experts(**args)
+            if name == "get_geo_density":
+                return get_geo_density(**args)
+            if name == "get_skill_distribution":
+                return get_skill_distribution()
+    return extract_text(resp)
 
 
 async def chat_loop():
-    print("=== AI Profile Assistant (MCP Connected) ===")
-    print("Ask about your scraped data (e.g., 'Find Python devs in NYC' or 'Who has the most followers on GitHub?')")
+    print("=== AI Profile Analyst (Active) ===")
+    print("Ready to analyze 10,000+ tech profiles.")
 
     while True:
         user_input = input("\nYou: ")
         if user_input.lower() in ['exit', 'quit']:
             break
 
-        # 1. Ask Gemini
-        response = call_gemini(user_input)
-        if not response:
-            print("Error connecting to Gemini.")
-            continue
+        # Step 1: Tool selection
+        resp = call_gemini(user_input, include_tools=True)
+        data_result = process_tool_calls(resp)
 
-        # 2. Handle Tool Call (The AI decides which DB tool to use)
-        tool_result = handle_tool_calls(response)
-
-        # 3. Send data back to Gemini for the final "Contextual" answer
-        if isinstance(tool_result, (list, dict)):
-            follow_up_prompt = f"Based on this database data: {json.dumps(tool_result)}, answer the user question: {user_input}"
-            final_response = call_gemini(follow_up_prompt)
-            answer = final_response['candidates'][0]['content']['parts'][0]['text']
-            print(f"\nAI: {answer}")
+        # Step 2: Contextual Summarization
+        if isinstance(data_result, (list, dict)):
+            # Force text response by disabling tools for final summary
+            final_prompt = (
+                f"I found this data in the profiles database:\n{json.dumps(data_result, indent=2)}\n\n"
+                f"Use this data to answer: {user_input}"
+            )
+            summary_resp = call_gemini(final_prompt, include_tools=False)
+            print(f"\nAI: {extract_text(summary_resp)}")
         else:
-            print(f"\nAI: {tool_result}")
+            print(f"\nAI: {data_result}")
 
 if __name__ == "__main__":
     asyncio.run(chat_loop())
