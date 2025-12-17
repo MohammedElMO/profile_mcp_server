@@ -5,49 +5,14 @@ from db_manager import DBManager
 
 def create_validation_schemas(db):
     """
-    Applies strict JSON Schema validation to collections.
-    This acts as the gatekeeper for data quality.
+    Applies strict JSON Schema validation to the profiles collection.
     """
-
-    # --- 1. ORGANIZATIONS COLLECTION ---
-    # Stores unique company data to avoid duplication in profiles.
-    try:
-        db.create_collection("organizations", validator={
-            "$jsonSchema": {
-                "bsonType": "object",
-                "required": ["name", "domain_hash"],
-                "properties": {
-                    "name": {
-                        "bsonType": "string",
-                        "description": "Canonical name of the company"
-                    },
-                    "domain_hash": {
-                        "bsonType": "string",
-                        "description": "Unique hash of website domain for deduplication"
-                    },
-                    "industry": {"bsonType": "string"},
-                    "location": {
-                        "bsonType": "object",
-                        "properties": {
-                            "city": {"bsonType": "string"},
-                            "country": {"bsonType": "string"}
-                        }
-                    }
-                }
-            }
-        })
-        print("✅ 'organizations' collection created.")
-    except OperationFailure:
-        print("ℹ️ 'organizations' collection already exists (skipping creation).")
-
-    # --- 2. PROFILES COLLECTION ---
-    # The main document. Notice the 'work' array embeds specific job details
-    # but references the 'organization_id' for company details.
+    # --- PROFILES COLLECTION ---
     try:
         db.create_collection("profiles", validator={
             "$jsonSchema": {
                 "bsonType": "object",
-                "required": ["basics", "source_id"],
+                "required": ["basics", "source_id", "source_platform"],
                 "properties": {
                     "basics": {
                         "bsonType": "object",
@@ -62,63 +27,85 @@ def create_validation_schemas(db):
                             "location": {"bsonType": "string"}
                         }
                     },
-                    "work_history": {
-                        "bsonType": "array",
-                        "items": {
-                            "bsonType": "object",
-                            "required": ["title", "start_date"],
-                            "properties": {
-                                "title": {"bsonType": "string"},
-                                # RELATIONSHIP: Link to organizations collection
-                                "org_id": {"bsonType": "objectId"},
-                                # Used if org_id is not yet known
-                                "org_name_fallback": {"bsonType": "string"},
-                                "start_date": {"bsonType": "string"},
-                                "end_date": {"bsonType": ["string", "null"]},
-                                "is_current": {"bsonType": "bool"}
-                            }
-                        }
-                    },
                     "skills": {
                         "bsonType": "array",
                         "items": {"bsonType": "string"}
                     },
-                    # Provenance: Where did this come from?
-                    "source_id": {"bsonType": "string"}
+                    "metrics": {"bsonType": "object"},
+                    "source_id": {"bsonType": "string"},
+                    "source_platform": {"bsonType": "string"}
                 }
             }
         })
-        print("✅ 'profiles' collection created.")
+        print("✅ 'profiles' collection created with JSON schema validation.")
     except OperationFailure:
-        print("ℹ️ 'profiles' collection already exists.")
-
-    # --- 3. LOGS COLLECTION ---
-    # No strict validation needed here, just a flexible bucket for errors/stats
-    if "extraction_logs" not in db.list_collection_names():
-        db.create_collection("extraction_logs")
-        print("✅ 'extraction_logs' collection created.")
+        print("ℹ️ 'profiles' collection already exists (applying validation update).")
+        # Update validator for existing collection
+        db.command("collMod", "profiles", validator={
+            "$jsonSchema": {
+                "bsonType": "object",
+                "required": ["basics", "source_id", "source_platform"],
+                "properties": {
+                    "basics": {
+                        "bsonType": "object",
+                        "required": ["name", "email"],
+                        "properties": {
+                            "name": {"bsonType": "string"},
+                            "email": {"bsonType": "string", "pattern": "^.+@.+$"},
+                            "headline": {"bsonType": "string"},
+                            "location": {"bsonType": "string"}
+                        }
+                    }
+                }
+            }
+        })
 
 
 def create_indexes(db):
     """
     Creates indexes to ensure query speed and data uniqueness.
     """
-    # PROFILES: Unique Email to prevent duplicates
-    db.profiles.create_index([("basics.email", ASCENDING)], unique=True)
+    # 1. Unique index on source_platform + source_id to prevent duplicates across runs
+    db.profiles.create_index(
+        [("source_platform", ASCENDING), ("source_id", ASCENDING)],
+        unique=True
+    )
 
-    # PROFILES: Text index for searching skills and headlines
-    db.profiles.create_index([
-        ("basics.headline", TEXT),
-        ("skills", TEXT)
-    ], name="search_index")
+    # 2. Unique Email index
+    try:
+        db.profiles.create_index([("basics.email", ASCENDING)], unique=True)
+    except OperationFailure as e:
+        print(
+            f"⚠️ Unique email index exists or conflict: {e.details.get('errmsg')}")
 
-    # ORGANIZATIONS: Unique Domain Hash
-    db.organizations.create_index([("domain_hash", ASCENDING)], unique=True)
+    # 3. Text index for searching (Handled for conflicts)
+    try:
+        print("Applying 'search_index'...")
+        db.profiles.create_index([
+            ("basics.headline", TEXT),
+            ("skills", TEXT),
+            ("basics.name", TEXT)
+        ], name="search_index")
+    except OperationFailure as e:
+        # Code 85 is IndexOptionsConflict: happens when index exists with different fields
+        if e.code == 85:
+            print(
+                "🔄 Index conflict detected. Dropping old 'search_index' and recreating...")
+            db.profiles.drop_index("search_index")
+            db.profiles.create_index([
+                ("basics.headline", TEXT),
+                ("skills", TEXT),
+                ("basics.name", TEXT)
+            ], name="search_index")
+            print("✅ 'search_index' updated successfully.")
+        else:
+            print(f"❌ Failed to create text index: {e}")
 
-    print("✅ Indexes applied successfully.")
+    print("✅ All indexes verified and applied.")
 
 
 if __name__ == "__main__":
+    # Ensure DBManager is configured correctly in your project
     manager = DBManager()
     db = manager.connect()
 

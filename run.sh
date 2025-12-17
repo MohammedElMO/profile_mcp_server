@@ -23,7 +23,7 @@ pip install -r requirements.txt
 
 # 4. Initialize Database Schema
 echo "Initializing Database Schema..."
-python3 init_db.py
+python3 db_schemas.py
 
 # 5. Check if we have data (Optional: Prompt to run scraper)
 echo "Ready to start the AI Client."

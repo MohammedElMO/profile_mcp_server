@@ -15,7 +15,7 @@ class DBManager:
     def __init__(self):
         # Fetch URI from environment variable for security
         self.uri = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
-        self.db_name = os.getenv("DB_NAME", "profile_scraper")
+        self.db_name = os.getenv("DB_NAME", "profile_scrapers")
         self.client = None
         self.db = None
 
