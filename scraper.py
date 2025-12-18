@@ -22,7 +22,6 @@ USER_AGENTS = [
     'Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1'
 ]
 
-# Common tech skills for extraction
 TECH_KEYWORDS = [
     "Python", "JavaScript", "TypeScript", "React", "Node.js", "Go", "Rust", "C++", "Java", "Kotlin",
     "Machine Learning", "AI", "Deep Learning", "TensorFlow", "PyTorch", "AWS", "Azure", "GCP",
@@ -83,6 +82,8 @@ class BaseScraper:
             return True
         return False
 
+# --- 1. GITHUB SCRAPER ---
+
 
 class GitHubScraper(BaseScraper):
     def __init__(self, db_collection):
@@ -90,11 +91,9 @@ class GitHubScraper(BaseScraper):
         self.token = os.getenv("SCRAPE_GITHUB_TOKEN")
 
     def discover_active_users(self, target=5000):
-        # Expanded topics to ensure 10k target
         topics = [
             'python', 'javascript', 'machine-learning', 'react', 'go', 'rust',
-            'data-science', 'devops', 'web3', 'cybersecurity', 'android', 'ios',
-            'cloud-native', 'ethereum', 'automation', 'backend', 'frontend'
+            'data-science', 'devops', 'web3', 'cybersecurity', 'android', 'ios'
         ]
         total_saved = 0
 
@@ -131,8 +130,7 @@ class GitHubScraper(BaseScraper):
         try:
             resp = self.session.get(url, headers=headers)
             if resp.status_code == 200:
-                raw = resp.json()
-                self.normalize_and_save(raw)
+                self.normalize_and_save(resp.json())
                 return True
             self.handle_rate_limit(resp)
         except Exception:
@@ -184,8 +182,10 @@ class GitHubScraper(BaseScraper):
                 {'$set': doc}, upsert=True
             )
             print(f"[NEW]        Saved GitHub: {doc['basics']['name']}")
-        except Exception as e:
-            logger.error(f"Error: {e}")
+        except Exception:
+            pass
+
+# --- 2. STACKOVERFLOW SCRAPER ---
 
 
 class StackOverflowScraper(BaseScraper):
@@ -216,7 +216,7 @@ class StackOverflowScraper(BaseScraper):
                     page += 1
                     time.sleep(1.5)
                 else:
-                    time.sleep(10)
+                    time.sleep(5)
             except Exception:
                 break
 
@@ -245,14 +245,19 @@ class StackOverflowScraper(BaseScraper):
         self.save_to_db(norm)
 
     def save_to_db(self, doc):
-        exists = self.collection.find_one(
-            {'source_platform': doc['source_platform'], 'source_id': doc['source_id']})
-        if exists:
-            print(f"[DUPLICATED] Skipping SO: {doc['basics']['name']}")
-            return
-        self.collection.update_one({'source_platform': doc['source_platform'], 'source_id': doc['source_id']}, {
-                                   '$set': doc}, upsert=True)
-        print(f"[NEW]        Saved SO: {doc['basics']['name']}")
+        try:
+            exists = self.collection.find_one(
+                {'source_platform': doc['source_platform'], 'source_id': doc['source_id']})
+            if exists:
+                print(f"[DUPLICATED] Skipping SO: {doc['basics']['name']}")
+                return
+            self.collection.update_one({'source_platform': doc['source_platform'], 'source_id': doc['source_id']}, {
+                                       '$set': doc}, upsert=True)
+            print(f"[NEW]        Saved SO: {doc['basics']['name']}")
+        except Exception:
+            pass
+
+# --- 3. ORCID SCRAPER ---
 
 
 class ORCIDScraper(BaseScraper):
@@ -262,9 +267,8 @@ class ORCIDScraper(BaseScraper):
         self.base_url = "https://pub.orcid.org/v3.0"
 
     def scrape_by_keywords(self, target=2000):
-        # Expanded keywords
-        keywords = ["Machine Learning", "Quantum", "Bioinformatics",
-                    "Climate", "Cryptography", "Robotics", "Genomics"]
+        keywords = ["Machine Learning", "Quantum",
+                    "Bioinformatics", "Climate", "Cryptography"]
         total = 0
         for kw in keywords:
             if total >= target:
@@ -308,8 +312,6 @@ class ORCIDScraper(BaseScraper):
         name = person.get('name', {})
         full_name = f"{name.get('given-names', {}).get('value', '')} {name.get('family-name', {}).get('value', '')}".strip()
         activities = raw.get('activities-summary', {})
-
-        # Skill extraction from researcher bio
         bio_text = person.get('biography', {}).get('content', '')
         skills = Normalizer.extract_skills(bio_text)
 
@@ -332,13 +334,18 @@ class ORCIDScraper(BaseScraper):
         self.save_to_db(norm)
 
     def save_to_db(self, doc):
-        exists = self.collection.find_one(
-            {'source_platform': doc['source_platform'], 'source_id': doc['source_id']})
-        if exists:
-            return
-        self.collection.update_one({'source_platform': doc['source_platform'], 'source_id': doc['source_id']}, {
-                                   '$set': doc}, upsert=True)
-        print(f"[NEW]        Saved ORCID: {doc['basics']['name']}")
+        try:
+            exists = self.collection.find_one(
+                {'source_platform': doc['source_platform'], 'source_id': doc['source_id']})
+            if exists:
+                return
+            self.collection.update_one({'source_platform': doc['source_platform'], 'source_id': doc['source_id']}, {
+                                       '$set': doc}, upsert=True)
+            print(f"[NEW]        Saved ORCID: {doc['basics']['name']}")
+        except Exception:
+            pass
+
+# --- 4. KAGGLE SCRAPER ---
 
 
 class KaggleScraper(BaseScraper):
@@ -402,23 +409,154 @@ class KaggleScraper(BaseScraper):
         self.save_to_db(norm)
 
     def save_to_db(self, doc):
-        exists = self.collection.find_one(
-            {'source_platform': doc['source_platform'], 'source_id': doc['source_id']})
-        if exists:
+        try:
+            exists = self.collection.find_one(
+                {'source_platform': doc['source_platform'], 'source_id': doc['source_id']})
+            if exists:
+                return
+            self.collection.update_one({'source_platform': doc['source_platform'], 'source_id': doc['source_id']}, {
+                                       '$set': doc}, upsert=True)
+            print(f"[NEW]        Saved Kaggle: {doc['basics']['name']}")
+        except Exception:
+            pass
+
+# --- 5. LINKEDIN SCRAPER (STEALTH) ---
+
+
+class LinkedInScraper(BaseScraper):
+    def __init__(self, db_collection):
+        super().__init__(db_collection)
+        self.cookie = os.getenv("LINKEDIN_COOKIE")
+        if not self.cookie:
+            logger.warning(
+                "LinkedInScraper initialized without Cookie. It will be skipped.")
+        else:
+            self.session.headers.update({
+                "Cookie": f"li_at={self.cookie}",
+                "Authority": "www.linkedin.com",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Upgrade-Insecure-Requests": "1",
+                "Sec-Fetch-Site": "none",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Dest": "document",
+            })
+
+    def search_and_scrape(self, keywords, limit=50):
+        if not self.cookie:
             return
-        self.collection.update_one({'source_platform': doc['source_platform'], 'source_id': doc['source_id']}, {
-                                   '$set': doc}, upsert=True)
-        print(f"[NEW]        Saved Kaggle: {doc['basics']['name']}")
+        total_scraped = 0
+        for keyword in keywords:
+            if total_scraped >= limit:
+                break
+            logger.info(f"LinkedIn: Searching for: {keyword}")
+            search_url = f"https://www.linkedin.com/search/results/people/?keywords={keyword}&origin=SWITCH_SEARCH_VERTICAL"
+
+            try:
+                self.session.headers["Referer"] = "https://www.linkedin.com/feed/"
+                resp = self.session.get(search_url)
+                if self.handle_rate_limit(resp):
+                    continue
+                if "security-challenge" in resp.text:
+                    logger.critical(
+                        "🛑 LinkedIn Auth Wall detected! Stopping LinkedIn scrape.")
+                    return
+
+                soup = BeautifulSoup(resp.text, 'html.parser')
+                profiles = set()
+                for a in soup.find_all('a', href=True):
+                    href = a['href']
+                    if '/in/' in href and 'miniProfile' not in href:
+                        profiles.add(href.split('?')[0])
+
+                logger.info(
+                    f"   Found {len(profiles)} candidates. Scraping carefully...")
+                for purl in list(profiles):
+                    if total_scraped >= limit:
+                        break
+                    time.sleep(random.uniform(25, 60))  # SAFETY SLEEP
+                    if self.scrape_profile(purl):
+                        total_scraped += 1
+            except Exception as e:
+                logger.error(f"LinkedIn error: {e}")
+
+    def scrape_profile(self, profile_url):
+        full_url = f"https://www.linkedin.com{profile_url}" if profile_url.startswith(
+            '/') else profile_url
+        try:
+            resp = self.session.get(full_url)
+            if resp.status_code == 200:
+                self.parse_and_save(resp.text, full_url)
+                return True
+        except Exception:
+            pass
+        return False
+
+    def parse_and_save(self, html, url):
+        soup = BeautifulSoup(html, 'html.parser')
+        data = {}
+        # Simple extraction strategy
+        name = soup.find('meta', property='og:title')
+        name = name['content'] if name else "Unknown"
+
+        public_id = url.split('/in/')[-1].strip('/')
+        skills = Normalizer.extract_skills(html)
+
+        norm = {
+            "source_platform": "LinkedIn",
+            "source_id": public_id,
+            "basics": {
+                "name": Normalizer.clean_str(name),
+                "headline": "LinkedIn Profile",
+                "location": "",
+                "current_affiliation": "",
+                "website": url,
+                "email": f"{public_id}@no-email.linkedin.com"
+            },
+            "metrics": {
+                "followers": -1, "following": -1, "reputation_score": 100,
+                "contribution_count": -1, "citation_count": -1, "h_index": -1,
+                "publication_count": -1, "tier": "Professional",
+                "competitions_count": -1, "medals": {"gold": -1, "silver": -1, "bronze": -1},
+                "profile_views": -1
+            },
+            "skills": skills, "affiliations": [], "publications": []
+        }
+        self.save_to_db(norm)
+
+    def save_to_db(self, doc):
+        try:
+            exists = self.collection.find_one(
+                {'source_platform': doc['source_platform'], 'source_id': doc['source_id']})
+            if exists:
+                print(
+                    f"[DUPLICATED] Skipping LinkedIn: {doc['basics']['name']}")
+                return
+            self.collection.update_one({'source_platform': doc['source_platform'], 'source_id': doc['source_id']}, {
+                                       '$set': doc}, upsert=True)
+            print(f"[NEW]        Saved LinkedIn: {doc['basics']['name']}")
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
     db = DBManager().connect()
     col = db['profiles']
-    print("=== STARTING 10K+ ENHANCED SCRAPE ===")
+    print("=== STARTING INTEGRATED MASS SCRAPE ===")
 
+    # Run others first
     StackOverflowScraper(col).scrape_n_users(3000)
     GitHubScraper(col).discover_active_users(5000)
     ORCIDScraper(col).scrape_by_keywords(2000)
     KaggleScraper(col).discover_and_scrape(500)
+
+    # Run LinkedIn last and carefully
+    if os.getenv("LINKEDIN_COOKIE"):
+        print("=== STARTING LINKEDIN SCRAPE (SLOW MODE) ===")
+        li = LinkedInScraper(col)
+        li.search_and_scrape(
+            ["Python", "Data Science", "React", "DevOps"], limit=1000)
+    else:
+        logger.warning(
+            "Skipping LinkedIn: LINKEDIN_COOKIE environment variable not set.")
 
     print("=== MASS SCRAPE COMPLETE ===")
