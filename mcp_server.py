@@ -10,7 +10,7 @@ mcp = FastMCP("TechProfileAnalytics")
 def get_db():
     client = MongoClient(os.getenv("MONGO_URI", "mongodb://localhost:27017"))
     # Ensure this matches your actual database name used in DBManager
-    db = client['profiles_database']
+    db = client['profile_scraper']
     return db['profiles']
 
 
