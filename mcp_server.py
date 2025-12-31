@@ -9,14 +9,12 @@ mcp = FastMCP("TechProfileAnalytics")
 
 def get_db():
     client = MongoClient(os.getenv("MONGO_URI", "mongodb://localhost:27017"))
-    # Ensure this matches your actual database name used in DBManager
     db = client['profile_scraper']
     return db['profiles']
 
 
 @mcp.tool()
 def search_profiles(query: str, limit: int = 5):
-    """General search for profiles based on text in name, headline, or location."""
     col = get_db()
     search_filter = {
         "$or": [
@@ -32,10 +30,6 @@ def search_profiles(query: str, limit: int = 5):
 
 @mcp.tool()
 def find_top_experts(skill: str, limit: int = 5):
-    """
-    Finds the highest-ranked professionals for a specific skill.
-    Uses reputation scores and contribution counts for ranking.
-    """
     col = get_db()
     query = {
         "$or": [
@@ -43,7 +37,6 @@ def find_top_experts(skill: str, limit: int = 5):
             {"basics.headline": {"$regex": skill, "$options": "i"}}
         ]
     }
-    # Ranking logic: High reputation, high contribution, high followers
     results = list(col.find(query).sort([
         ("metrics.reputation_score", -1),
         ("metrics.contribution_count", -1),
@@ -54,10 +47,6 @@ def find_top_experts(skill: str, limit: int = 5):
 
 @mcp.tool()
 def get_geo_density(location: str):
-    """
-    Analyzes the concentration of tech talent in a specific city or region.
-    Returns counts per platform and avg reputation scores.
-    """
     col = get_db()
     pipeline = [
         {"$match": {"basics.location": {"$regex": location, "$options": "i"}}},
@@ -72,7 +61,6 @@ def get_geo_density(location: str):
 
 @mcp.tool()
 def get_skill_distribution():
-    """Identifies the most common tech skills appearing in the database."""
     col = get_db()
     pipeline = [
         {"$unwind": "$skills"},

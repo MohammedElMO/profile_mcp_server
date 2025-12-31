@@ -11,7 +11,6 @@ import os
 import re
 from pymongo import ASCENDING
 
-# Configuration for MCP-ready Data Quality
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -49,7 +48,6 @@ class Normalizer:
 
     @staticmethod
     def extract_skills(text):
-        """Heuristic to extract skills from text content."""
         if not text:
             return []
         found = []
@@ -65,7 +63,6 @@ class BaseScraper:
         self.session = requests.Session()
         self.consecutive_429 = 0
         self.consecutive_duplicates = 0
-        # If we hit 50 duplicates in a row, stop scraping
         self.MAX_DUPLICATES_BEFORE_STOP = 50
 
     def get_headers(self, referer=None):
@@ -79,33 +76,28 @@ class BaseScraper:
         return headers
 
     def handle_rate_limit(self, response):
-        """Returns True if rate limited, and handles backoff. Aborts if too many retries."""
         if response.status_code == 403 or response.status_code == 429:
             self.consecutive_429 += 1
             if self.consecutive_429 > 3:
                 logger.critical(
-                    f"🛑 Too many Rate Limits ({self.consecutive_429}). Aborting this scraper to protect IP.")
+                    f"Too many Rate Limits ({self.consecutive_429}). Aborting this scraper to protect IP.")
                 raise Exception("Rate Limit Exceeded")
 
             wait_time = random.randint(60, 120) * self.consecutive_429
             logger.warning(
-                f"⚠️ Rate limited (Status {response.status_code}). Sleeping for {wait_time}s...")
+                f"Rate limited (Status {response.status_code}). Sleeping for {wait_time}s...")
             time.sleep(wait_time)
             return True
 
-        # Reset counter on success
         self.consecutive_429 = 0
         return False
 
     def check_duplicate_stop(self):
-        """Checks if we should stop due to finding too many existing profiles."""
         if self.consecutive_duplicates >= self.MAX_DUPLICATES_BEFORE_STOP:
             logger.info(
-                f"🛑 Hit {self.consecutive_duplicates} duplicates in a row. Assuming data is up to date. Stopping.")
+                f"Hit {self.consecutive_duplicates} duplicates in a row. Assuming data is up to date. Stopping.")
             return True
         return False
-
-# --- 1. GITHUB SCRAPER ---
 
 
 class GitHubScraper(BaseScraper):
@@ -124,7 +116,7 @@ class GitHubScraper(BaseScraper):
             if total_saved >= target:
                 break
             if self.check_duplicate_stop():
-                break  # Stop if we are just rescanning
+                break
 
             logger.info(f"GitHub: Searching topic: {topic}")
             search_url = f"https://api.github.com/search/repositories?q=topic:{topic}&sort=stars&order=desc"
@@ -146,7 +138,7 @@ class GitHubScraper(BaseScraper):
 
                         if self.fetch_user_detail(repo['owner']['url']):
                             total_saved += 1
-                            self.consecutive_duplicates = 0  # Reset on success
+                            self.consecutive_duplicates = 0
                         else:
                             self.consecutive_duplicates += 1
 
@@ -218,8 +210,6 @@ class GitHubScraper(BaseScraper):
         except Exception:
             return False
 
-# --- 2. STACKOVERFLOW SCRAPER ---
-
 
 class StackOverflowScraper(BaseScraper):
     def __init__(self, db_collection):
@@ -227,11 +217,9 @@ class StackOverflowScraper(BaseScraper):
         self.api_url = "https://api.stackexchange.com/2.3/users"
 
     def get_lowest_reputation(self):
-        """Finds the lowest reputation score in our DB to resume scraping from."""
         try:
             record = self.collection.find_one(
                 {"source_platform": "StackOverflow"},
-                # Get the lowest
                 sort=[("metrics.reputation_score", ASCENDING)]
             )
             if record and record.get('metrics'):
@@ -241,7 +229,6 @@ class StackOverflowScraper(BaseScraper):
         return None
 
     def scrape_n_users(self, target=3000):
-        # 1. SMART RESUME: Start from where we left off (lowest reputation)
         last_rep = self.get_lowest_reputation()
 
         page = 1
@@ -261,8 +248,6 @@ class StackOverflowScraper(BaseScraper):
                 "order": "desc",
                 "sort": "reputation"
             }
-            # If we have data, only ask for users WORSE than our worst user
-            # This skips everyone we already have.
             if last_rep:
                 params['max'] = last_rep - 1
 
@@ -288,7 +273,6 @@ class StackOverflowScraper(BaseScraper):
                         else:
                             self.consecutive_duplicates += 1
 
-                    # Update resume point for next iteration if we found new lowest
                     if items:
                         current_min = min(
                             [x.get('reputation', 999999) for x in items])
@@ -347,8 +331,6 @@ class StackOverflowScraper(BaseScraper):
             return True
         except Exception:
             return False
-
-# --- 3. ORCID SCRAPER ---
 
 
 class ORCIDScraper(BaseScraper):
@@ -455,8 +437,6 @@ class ORCIDScraper(BaseScraper):
         except Exception:
             return False
 
-# --- 4. KAGGLE SCRAPER ---
-
 
 class KaggleScraper(BaseScraper):
     def __init__(self, db_collection):
@@ -538,8 +518,6 @@ class KaggleScraper(BaseScraper):
         except Exception:
             return False
 
-# --- 5. LINKEDIN SCRAPER (STEALTH) ---
-
 
 class LinkedInScraper(BaseScraper):
     def __init__(self, db_collection):
@@ -576,7 +554,7 @@ class LinkedInScraper(BaseScraper):
                     continue
                 if "security-challenge" in resp.text:
                     logger.critical(
-                        "🛑 LinkedIn Auth Wall detected! Stopping LinkedIn scrape.")
+                        "LinkedIn Auth Wall detected! Stopping LinkedIn scrape.")
                     return
 
                 soup = BeautifulSoup(resp.text, 'html.parser')
@@ -658,7 +636,6 @@ if __name__ == "__main__":
     col = db['profiles']
     print("=== STARTING INTEGRATED MASS SCRAPE ===")
 
-    # StackOverflowScraper(col).scrape_n_users(3000)
     GitHubScraper(col).discover_active_users(5000)
     ORCIDScraper(col).scrape_by_keywords(2000)
     KaggleScraper(col).discover_and_scrape(500)

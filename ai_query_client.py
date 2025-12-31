@@ -6,17 +6,14 @@ import asyncio
 from mcp_server import search_profiles, find_top_experts, get_geo_density, get_skill_distribution
 import os
 
-# Load environment variables from .env file
 load_dotenv()
 
-API_KEY = os.getenv("GEMINI_API_KEY")  # Handled by environment
+API_KEY = os.getenv("GEMINI_API_KEY")
 
-# Gemini Configuration
 MODEL_NAME = "gemini-2.5-flash-preview-09-2025"
 
 
 def call_gemini(prompt, include_tools=True):
-    """Wraps the Gemini API with optional tool definitions."""
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent?key={API_KEY}"
 
     payload = {
@@ -61,7 +58,6 @@ def call_gemini(prompt, include_tools=True):
 
 
 def extract_text(resp):
-    """Helper to safely extract text content."""
     try:
         return resp['candidates'][0]['content']['parts'][0]['text']
     except:
@@ -69,7 +65,6 @@ def extract_text(resp):
 
 
 def process_tool_calls(resp):
-    """Detects and executes function calls requested by the AI."""
     parts = resp.get('candidates', [{}])[0].get('content', {}).get('parts', [])
     for part in parts:
         if 'functionCall' in part:
@@ -89,21 +84,18 @@ def process_tool_calls(resp):
 
 
 async def chat_loop():
-    print("=== AI Profile Analyst (Active) ===")
+    print("=== AI Profile Analyst  ===")
     print("Ready to analyze 10,000+ tech profiles.")
 
     while True:
-        user_input = input("\nYou: ")
+        user_input = input("\nWhat would You Like to know About The Profiles: ")
         if user_input.lower() in ['exit', 'quit']:
             break
 
-        # Step 1: Tool selection
         resp = call_gemini(user_input, include_tools=True)
         data_result = process_tool_calls(resp)
 
-        # Step 2: Contextual Summarization
         if isinstance(data_result, (list, dict)):
-            # Force text response by disabling tools for final summary
             final_prompt = (
                 f"I found this data in the profiles database:\n{json.dumps(data_result, indent=2)}\n\n"
                 f"Use this data to answer: {user_input}"
